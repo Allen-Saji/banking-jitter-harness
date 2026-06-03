@@ -344,6 +344,13 @@ mod tests {
     // ====================================================================
     #[test]
     fn measure_banking_stage_slot_timing() {
+        // With --features tokio-console (and RUSTFLAGS="--cfg tokio_unstable"),
+        // start the console subscriber for the whole process. tokio-console will
+        // then surface the banking-stage manager's current-thread runtime tasks
+        // and its spawn_blocking shims -- but none of the crossbeam OS worker
+        // threads, which is the blind spot this harness works around with /proc.
+        #[cfg(feature = "tokio-console")]
+        console_subscriber::init();
         agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, mint_keypair, .. } =
@@ -476,6 +483,16 @@ mod tests {
                 let attr = (elapsed_us, rows, (mnf - bmnf, mjf - bmjf));
                 if i == 0 { cold_attr = Some(attr) } else { steady_attr = Some(attr) }
             }
+        }
+
+        // Keep the banking stage (and its manager runtime) alive long enough for
+        // an operator to attach tokio-console and inspect it live.
+        #[cfg(feature = "tokio-console")]
+        {
+            println!("\n  [tokio-console] manager runtime is live; attach `tokio-console` now.");
+            println!("  Observe: only the BankingMgr runtime + spawn_blocking shims appear;");
+            println!("  the solBnkTxSched / solCoWorker* OS threads do not. Sleeping 60s.");
+            std::thread::sleep(std::time::Duration::from_secs(60));
         }
 
         drop(non_vote_sender);

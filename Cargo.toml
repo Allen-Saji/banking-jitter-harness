@@ -7,6 +7,15 @@ edition = "2024"
 name = "banking_jitter"
 path = "src/lib.rs"
 
+[features]
+# Enable the tokio-console subscriber in Harness 1 to demonstrate, live, that
+# it only surfaces the banking-stage manager runtime and not the OS worker
+# threads. Build with RUSTFLAGS="--cfg tokio_unstable".
+tokio-console = ["dep:console-subscriber"]
+
+[dependencies]
+console-subscriber = { version = "0.4", optional = true }
+
 [dev-dependencies]
 agave-banking-stage-ingress-types = { path = "../banking-stage-ingress-types", features = ["agave-unstable-api"] }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
