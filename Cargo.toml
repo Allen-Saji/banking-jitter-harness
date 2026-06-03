@@ -23,7 +23,6 @@ solana-runtime-transaction = { path = "../runtime-transaction", features = ["aga
 solana-system-transaction = "4.0.0"
 solana-transaction = "4.1.1"
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
-# Light allocator probe: jemalloc as the test-binary global allocator + per-thread
-# allocation counter. Versions match agave's workspace (tikv-jemalloc* 0.6.0).
+# Allocator pause-time probe: jemalloc wrapped by a timing GlobalAlloc shim.
+# Version matches agave's workspace (tikv-jemallocator 0.6.0).
 tikv-jemallocator = "0.6.0"
-tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats"] }
