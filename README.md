@@ -19,10 +19,14 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
   - Not Agave CPU: during the 31 ms cold window, all Agave worker threads combined
     use under 1 ms of CPU.
   - Not scheduling (run-queue wait ~0) and not disk (major page faults 0).
-  - What is elevated: ~2360 minor page faults (first-touch demand paging) vs ~150
+  - What is elevated: ~2200 minor page faults (first-touch demand paging) vs ~170
     steady.
-- Diagnosis: the cold start is dominated by parked-thread wakeup / first-message
-  latency plus first-touch paging, not computation or allocation.
+- Diagnosis (located, not inferred): an off-CPU `wchan` sampler shows all ~30 banking
+  worker threads parked in `futex_wait_queue` for the full cold window with ~0 CPU,
+  the manager thread in `ep_poll`, and only PoH ticking (~600 us). The cold start is
+  parked-thread wakeup / first-message latency plus first-touch paging, not
+  computation, allocation, or scheduling. (The manager sitting in `ep_poll` also
+  independently confirms the hybrid tokio-plus-OS-threads architecture below.)
 
 ## Votor budget: where the deadline comes from
 
@@ -49,11 +53,14 @@ budget as a deadline and measures real banking code against it.
 ### 1. `measure_banking_stage_slot_timing` -- end to end + worker attribution
 
 Drives a real `BankingStage` (CentralSchedulerGreedy, 4 workers) and times send to
-committed entry. On the cold iteration and one steady iteration it additionally
-snapshots **every Agave thread's `/proc/self/task/<tid>/schedstat`** (on-CPU ns and
-run-queue-wait ns) plus process minor/major page faults, so the spike is attributed
-to specific threads. This is the answer to the tokio-console blind spot (below): the
-OS worker threads that tokio-console cannot see are read directly from `/proc`.
+committed entry. On the cold iteration and one steady iteration it snapshots **every
+Agave thread's `schedstat`** (on-CPU ns, run-queue-wait ns) and **per-thread context
+switches** (`/proc/self/task/<tid>/status`), plus process page faults. On the cold
+iteration it additionally runs an **off-CPU `wchan` sampler**: a background thread
+polls each worker's `/proc/self/task/<tid>/wchan` and tallies where it is parked, so
+the residual wakeup wait is located (a futex / channel wait) rather than guessed. This
+is the answer to the tokio-console blind spot (below): the OS worker threads it cannot
+see are read directly from `/proc`.
 
 ### 2. `measure_pre_phase_slot_timing` -- per phase + true allocator pause
 
@@ -143,11 +150,11 @@ The end-to-end and contention harnesses use only public APIs.
 
 - Single-transaction batches in Harnesses 1 and 2, so `freeze_lock` (bank freeze
   RwLock) is ~0; Harness 3 shows the account-lock contention signal instead.
-- The exact source of the residual cold-start wait (parked-thread wakeup latency) is
-  inferred from low CPU plus low run-queue-wait plus elevated minor faults. Pinning it
-  to a specific futex / channel wait would need span tracing inside the worker loop.
-- Context-switch counts are read from `/proc/self/status`, which reflects the driver
-  thread only; per-worker switch counts would need `/proc/self/task/<tid>/status`.
-- `delta = 50 ms` is an assumption (swept in the report, not measured live).
+- The `wchan` sampler is opportunistic: it captures a thread's sleep location only
+  while blocked (an on-CPU thread reads `wchan` as `0`), and its poll rate is best
+  effort. It identifies *where* time is spent parked, not an exact per-park duration.
+- `delta = 50 ms` is an assumption (swept across 25/50/100 ms in the report, not
+  measured live).
 - Harness 2 runs an isolated `Consumer`, not the full multi-threaded scheduler;
   Harness 1 covers the real multi-threaded path end to end.
+- Linux-specific: the `/proc` schedstat, status, and wchan probes assume a Linux host.
