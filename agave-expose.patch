@@ -1,0 +1,29 @@
+diff --git a/core/src/banking_stage.rs b/core/src/banking_stage.rs
+index 96373d3..56acc56 100644
+--- a/core/src/banking_stage.rs
++++ b/core/src/banking_stage.rs
+@@ -58,9 +58,9 @@ use {
+ 
+ pub mod transaction_scheduler;
+ 
+-mod committer;
++pub mod committer; // HARNESS-PATCH: expose for banking-jitter pre-phase harness (revert before upstream)
+ mod consume_worker;
+-mod consumer;
++pub mod consumer; // HARNESS-PATCH: expose for banking-jitter pre-phase harness (revert before upstream)
+ mod decision_maker;
+ mod latest_validator_vote_packet;
+ mod leader_slot_metrics;
+diff --git a/core/src/banking_stage/consumer.rs b/core/src/banking_stage/consumer.rs
+index fdb814f..1f59782 100644
+--- a/core/src/banking_stage/consumer.rs
++++ b/core/src/banking_stage/consumer.rs
+@@ -87,7 +87,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
+     // A result that indicates whether transactions were successfully
+     // committed into the Poh stream.
+     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
+-    pub(crate) execute_and_commit_timings: LeaderExecuteAndCommitTimings,
++    pub execute_and_commit_timings: LeaderExecuteAndCommitTimings, // HARNESS-PATCH: was pub(crate); expose for banking-jitter pre-phase harness (revert before upstream)
+     pub(crate) error_counters: TransactionErrorMetrics,
+ }
+ 
