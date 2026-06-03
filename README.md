@@ -28,6 +28,32 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
   computation, allocation, or scheduling. (The manager sitting in `ep_poll` also
   independently confirms the hybrid tokio-plus-OS-threads architecture below.)
 
+## Process: how this was built
+
+1. **Read the paper for the timing.** Pulled the Votor per-round timing out of the
+   Alpenglow v1.1 whitepaper: a block must reach finalization within `min(delta_80,
+   2*delta_60)` (fast path one round at >=80% stake, slow path two rounds at >=60%),
+   with block production bounded by `delta_block = 400 ms`. Recorded the exact figure
+   and section the numbers come from.
+2. **Picked the deadline that applies to banking.** Votor does not run in Agave yet
+   (TowerBFT does), so the harness uses the budget as an SLA: the banking stage is
+   graded against `delta_block = 400 ms`, with the finalization and liveness numbers
+   reported for context.
+3. **Pinned the system under observation.** Cloned Agave at `f8bc56e` and built the
+   harness as a workspace crate against the real `core/src/banking_stage.rs`.
+4. **Discovered the architecture.** Found that `banking_stage.rs` is a hybrid: a tokio
+   manager runtime plus plain OS worker threads on crossbeam channels. This is the key
+   to everything downstream.
+5. **Hit the tokio-console blind spot.** Wired `tokio-console` (above) and confirmed it
+   only surfaces the manager, not the OS workers. So it cannot trace the hot path here.
+6. **Built thread-agnostic probes instead.** Per-thread `schedstat`, per-thread context
+   switches, a `wchan` off-CPU sampler, page-fault counts, and a timing-allocator shim
+   for true malloc pause time -- so jitter can be split into CPU-scheduling vs I/O vs
+   allocator with evidence.
+7. **Measured and located the jitter.** Found that steady-state banking is ~1000x inside
+   budget and the only real jitter is a one-time cold start, then attributed that cold
+   start to futex/wakeup latency (not CPU, allocation, or scheduling) using the probes.
+
 ## Votor budget: where the deadline comes from
 
 Source: Alpenglow White Paper v1.1, **Figure 7** (p22, Votor per-round lifecycle).
@@ -99,19 +125,32 @@ hosts a current-thread tokio runtime (`tokio::select!` over a control channel pl
 `spawn_blocking` shims), while the real scheduler and N transaction workers are plain
 `std::thread`s wired with crossbeam channels.
 
-`tokio-console` therefore sees only the manager runtime and its `spawn_blocking` shims
-(which sit "busy" forever joining lifelong threads). The actual scheduling, execution,
-and channel-wait jitter is in OS threads that are invisible to it.
-
-This harness defeats the blind spot by reading the worker threads directly from `/proc`
-by thread id (`schedstat` per `solBnkTxSched`, `solCoWorker00..03`, `BankingMgr`, etc).
-`schedstat` and the timing allocator are thread-agnostic; tokio-console is the thing
-that artificially restricts the view. To reproduce the tokio side for contrast:
+Harness 1 wires `tokio-console` directly so this is demonstrated rather than asserted.
+Build with the `tokio-console` feature and run it, then attach the console from a second
+terminal:
 
 ```bash
-RUSTFLAGS="--cfg tokio_unstable" cargo test -p banking-jitter measure_banking_stage_slot_timing
-# connect a separate `tokio-console`; observe only the idle manager + shims
+# terminal 1 -- run the harness with the console subscriber active
+RUSTFLAGS="--cfg tokio_unstable" \
+  cargo test -p banking-jitter --features tokio-console \
+  measure_banking_stage_slot_timing -- --nocapture --test-threads=1
+# it prints "manager runtime is live; attach tokio-console now" and holds 60s
+
+# terminal 2
+tokio-console
 ```
+
+What `tokio-console` shows: the banking-stage manager's current-thread runtime and its
+`spawn_blocking` shims, which sit "busy" forever joining lifelong threads. What it does
+**not** show: `solBnkTxSched`, `solCoWorker00..03`, or any of the crossbeam OS worker
+threads, because they are not tokio tasks. So tokio-console cannot answer "which task is
+delaying the others" here -- the hot path is invisible to it. This matches what the
+`/proc` probes found independently: the manager thread is parked in `ep_poll` (the tokio
+runtime), the workers in `futex_wait_queue`.
+
+The harness therefore reads the workers directly from `/proc` by thread id (`schedstat`,
+per-thread context switches, `wchan`). `schedstat`, `wchan`, and the timing allocator are
+thread-agnostic; tokio-console is the tool that artificially restricts the view.
 
 ## Build and run
 
