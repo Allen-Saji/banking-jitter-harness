@@ -29,9 +29,6 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
 Source: Alpenglow White Paper v1.1, **Figure 7** (p22, Votor per-round lifecycle).
 The numeric bounds are in the abstract, Section 1.5, Table 6, and Definition 17.
 
-> Note: this is **not** Figure 2 (the double-Merkle block-data hierarchy). Calling the
-> timeline "Figure 2" is a common mis-citation from an older draft.
-
 | Quantity | Meaning | Value |
 |---|---|---|
 | `delta_block` | Normal block-production time. **What banking is judged against.** | 400 ms |
