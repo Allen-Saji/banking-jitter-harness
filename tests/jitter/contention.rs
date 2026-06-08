@@ -6,7 +6,10 @@
 
 use {
     crossbeam_channel::unbounded,
-    solana_core::banking_stage::{committer::Committer, consumer::Consumer},
+    solana_core::banking_stage::{
+        committer::{CommitTransactionDetails, Committer},
+        consumer::Consumer,
+    },
     solana_ledger::genesis_utils::GenesisConfigInfo,
     solana_poh::{record_channels::record_channels, transaction_recorder::TransactionRecorder},
     solana_runtime::bank::Bank,
@@ -43,20 +46,37 @@ fn measure_account_lock_contention() {
 
     let out = consumer.process_and_record_transactions(&bank, &txs);
     let eo = &out.execute_and_commit_transactions_output;
-    let committed = eo
-        .commit_transactions_result
-        .as_ref()
-        .map(|v| v.len())
+
+    // `commit_transactions_result` holds one CommitTransactionDetails per
+    // ATTEMPTED transaction (Committed or NotCommitted), so its length is the
+    // attempted count, not the committed count -- the conflicting subset is
+    // present as NotCommitted(AccountInUse). Count the Committed variants to get
+    // the transactions that actually took the locks and landed in the block.
+    let statuses = eo.commit_transactions_result.as_ref();
+    let attempted = statuses.map(|v| v.len()).unwrap_or(0);
+    let committed = statuses
+        .map(|v| {
+            v.iter()
+                .filter(|d| matches!(d, CommitTransactionDetails::Committed { .. }))
+                .count()
+        })
         .unwrap_or(0);
 
     println!("\n=== Harness 3: account-lock contention ===");
     println!("  submitted   : {} transactions, all writing the same two accounts", txs.len());
-    println!("  committed   : {committed}  (the rest are serialized out by account locks)");
+    println!("  attempted   : {attempted}  (entered the lock/execute pipeline)");
+    println!("  committed   : {committed}  (took the account locks and landed in the block)");
+    println!("  serialized  : {}  (NotCommitted, reported AccountInUse)", attempted - committed);
     println!("  reading: account-lock contention shows up as a committed-count drop and");
     println!("  retries, NOT as freeze_lock time. freeze_lock guards the bank freeze, a");
     println!("  different lock. This corrects the earlier freeze_lock framing.");
 
-    // With all-conflicting transactions, at most one can take the locks per
-    // batch pass.
-    assert!(committed <= txs.len());
+    // All-conflicting transactions: only the subset that wins the account locks
+    // commits, so committed is strictly less than submitted (in practice 1).
+    assert!(committed >= 1, "at least one tx should win the locks and commit");
+    assert!(
+        committed < txs.len(),
+        "expected account-lock contention to serialize out some txs, but all {} committed",
+        txs.len()
+    );
 }
