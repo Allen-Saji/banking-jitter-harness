@@ -15,6 +15,10 @@ tokio-console = ["dep:console-subscriber"]
 
 [dependencies]
 console-subscriber = { version = "0.4", optional = true }
+# Allocator pause-time probe: jemalloc wrapped by a timing GlobalAlloc shim.
+# Used by the `alloc` module (library code), so it is a normal dependency.
+# Version matches agave's workspace (tikv-jemallocator 0.6.0).
+tikv-jemallocator = "0.6.0"
 
 [dev-dependencies]
 agave-banking-stage-ingress-types = { path = "../banking-stage-ingress-types", features = ["agave-unstable-api"] }
@@ -32,6 +36,3 @@ solana-runtime-transaction = { path = "../runtime-transaction", features = ["aga
 solana-system-transaction = "4.0.0"
 solana-transaction = "4.1.1"
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
-# Allocator pause-time probe: jemalloc wrapped by a timing GlobalAlloc shim.
-# Version matches agave's workspace (tikv-jemallocator 0.6.0).
-tikv-jemallocator = "0.6.0"

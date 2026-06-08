@@ -152,6 +152,37 @@ The harness therefore reads the workers directly from `/proc` by thread id (`sch
 per-thread context switches, `wchan`). `schedstat`, `wchan`, and the timing allocator are
 thread-agnostic; tokio-console is the tool that artificially restricts the view.
 
+## Project layout
+
+The crate is split into a small library of host probes (pure std, no Agave
+dependencies) plus the three measurement runs that drive real Agave code:
+
+```
+src/
+  lib.rs          crate docs + module declarations (compiles standalone)
+  alloc.rs        TimingAlloc + measure_alloc -- the timing global allocator
+  proc_probe.rs   /proc probes: schedstat, context switches, wchan sampler, faults
+  stats.rs        Summary / summarize / print_row
+  votor.rs        Alpenglow Votor budget constants + report
+tests/
+  jitter.rs       integration entry: installs #[global_allocator], wires the harnesses
+  jitter/
+    common.rs       shared genesis + transaction helpers
+    end_to_end.rs   Harness 1 (measure_banking_stage_slot_timing)
+    per_phase.rs    Harness 2 (measure_pre_phase_slot_timing)
+    contention.rs   Harness 3 (measure_account_lock_contention)
+```
+
+The Agave crates (`solana-core`, `solana-ledger`, ...) are `[dev-dependencies]`,
+so the harnesses that use them live under `tests/`. The probe library uses only
+`std` and `tikv-jemallocator`, so it compiles on its own (`cargo build`).
+
+The three harnesses are kept in **one** integration binary (`tests/jitter.rs`,
+pulling in `tests/jitter/*.rs` via `#[path]`) so the heavy `solana-core`
+dependency graph links once rather than three times. That binary installs
+`alloc::TimingAlloc` as the `#[global_allocator]`; only Harness 2 turns
+measurement on, so the others pay just a thread-local bool check per allocation.
+
 ## Build and run
 
 This crate must live inside an Agave checkout (path dependencies on `../core`,
