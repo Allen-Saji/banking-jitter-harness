@@ -11,14 +11,19 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
 
 - Steady-state banking is ~200 us end to end and ~90 us inside the consumer:
   comfortably inside Votor's 400 ms block budget, with roughly 1000x headroom.
-- All meaningful jitter is a one-time **cold start**, ~30 ms on the first end-to-end
+  Steady state still carries a small p99 tail (~1 ms vs ~200 us median), itself
+  well inside budget.
+- The dominant jitter is a one-time **cold start**, ~30 ms on the first end-to-end
   iteration. The harness measures what causes it rather than guessing, and the
   evidence rules out the obvious explanations:
-  - Not the allocator: a timing allocator shows 10 us of malloc/free on the cold
-    iteration vs 9 us steady, essentially identical.
-  - Not Agave CPU: during the 31 ms cold window, all Agave worker threads combined
-    use under 1 ms of CPU.
+  - Not Agave CPU: during the ~30 ms cold window, all Agave worker threads combined
+    use under 1 ms of CPU (per-thread `schedstat`, end-to-end harness).
   - Not scheduling (run-queue wait ~0) and not disk (major page faults 0).
+  - Not the allocator: near-zero worker CPU leaves no room for malloc time on the
+    end-to-end path, and the per-phase harness confirms it directly -- a timing
+    allocator shows ~10 us of malloc/free on the consumer's cold iteration vs ~9 us
+    steady. (That is the consumer's own ~0.4 ms cold start, measured directly, not
+    the ~30 ms end-to-end one.)
   - What is elevated: ~2200 minor page faults (first-touch demand paging) vs ~170
     steady.
 - Diagnosis (located, not inferred): an off-CPU `wchan` sampler shows all ~30 banking
@@ -51,8 +56,9 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
    for true malloc pause time -- so jitter can be split into CPU-scheduling vs I/O vs
    allocator with evidence.
 7. **Measured and located the jitter.** Found that steady-state banking is ~1000x inside
-   budget and the only real jitter is a one-time cold start, then attributed that cold
-   start to futex/wakeup latency (not CPU, allocation, or scheduling) using the probes.
+   budget and the dominant jitter is a one-time cold start (steady state keeps a small
+   p99 tail, still far inside budget), then attributed that cold start to futex/wakeup
+   latency (not CPU, allocation, or scheduling) using the probes.
 
 ## Votor budget: where the deadline comes from
 
