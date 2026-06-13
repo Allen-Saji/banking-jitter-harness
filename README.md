@@ -33,6 +33,33 @@ Built as a workspace crate inside Agave, pinned to commit `f8bc56e` (master,
   computation, allocation, or scheduling. (The manager sitting in `ep_poll` also
   independently confirms the hybrid tokio-plus-OS-threads architecture below.)
 
+## Architecture diagram
+
+![Banking Jitter Harness architecture](docs/banking-jitter-arch.png)
+
+How to read it, top to bottom:
+
+1. **Harnesses (entry points).** The three runs share one `cargo test` binary.
+   Harness 1 sends a packet into a real `BankingStage` and times the full pipeline;
+   Harnesses 2 and 3 bypass the threading and call the `Consumer` directly, so the
+   same-thread probes attribute cleanly.
+2. **System under observation.** `banking_stage` is a hybrid: a tokio manager thread
+   (control plane, parked in `ep_poll`) sitting over a data-plane pipeline of plain
+   OS threads on crossbeam channels -- `non_vote` channel -> `solBnkTxSched` scheduler
+   -> `solCoWorker00..03` -> `Consumer` (load_execute / freeze_lock / record / commit)
+   -> PoH -> committed entry. The yellow callout is the tokio-console blind spot: the
+   console surfaces only the manager, never the OS workers.
+3. **Host probes.** Because the workers are invisible to tokio-console, the harness
+   reads every thread from `/proc` plus a timing allocator -- per-thread `schedstat`
+   (CPU-scheduling delay), a `wchan` off-CPU sampler (where each worker parks), the
+   `TimingAlloc` shim (true malloc/free pause), and `/proc/self/stat` faults (demand
+   paging vs disk). Each probe maps to one jitter bucket.
+4. **Verdict vs delta_block = 400 ms.** Steady-state banking is ~1000x inside budget;
+   the one-time cold start is futex wakeup plus first-touch paging, not computation,
+   allocation, or scheduling.
+
+The rest of this README is the detail behind each box.
+
 ## Process: how this was built
 
 1. **Read the paper for the timing.** Pulled the Votor per-round timing out of the
